@@ -32,27 +32,35 @@ pipeline {
         }
 
 
-        stage('Check dependent applications') {
-            when {
-                not { branch 'master' }
-            }
+        stage('Publish and trigger') {
             steps {
                 script {
+                    def isMasterBranch = env.BRANCH_NAME == 'master'
+                    def credentials = [
+                        string(credentialsId: isMasterBranch ? 'NPM_CREDENTIALS' : 'LOCAL_NPM_AUTH_TOKEN', variable: 'NPM_TOKEN')
+                    ];
+                    if (!isMasterBranch) {
+                        credentials.push(string(credentialsId: 'LOCAL_NPM_HOST_PORT', variable: 'NPM_ADDR'))
+                    }
                     docker.image('node:8').inside {
-                        withCredentials([
-                            string(credentialsId: 'LOCAL_NPM_AUTH_TOKEN', variable: 'NPM_TOKEN'),
-                            string(credentialsId: 'LOCAL_NPM_HOST_PORT', variable: 'NPM_ADDR')
-                        ]) {
+                        withCredentials(credentials) {
                             try {
-                                sh "npm config set registry http://${env.NPM_ADDR}"
+                                if (!isMasterBranch) {
+                                    sh "npm config set registry http://${env.NPM_ADDR}"
+                                } else {
+                                    env.NPM_ADDR = 'registry.npmjs.org'
+                                }
                                 sh "npm config set //${env.NPM_ADDR}/:_authToken ${env.NPM_TOKEN}"
                                 sh "npm whoami"
-                                sh "./node_modules/.bin/lerna publish --force-publish=* --canary --yes"
+                                sh "./node_modules/.bin/lerna publish --canary --yes"
                             } catch(Exception e) {
                             }
                         }
                     }
 
+                    if (isMasterBranch) {
+                        return
+                    }
 
                     GIT_HASH_COMMIT = sh (
                         script: 'git rev-parse HEAD | cut -c1-8',
@@ -78,25 +86,6 @@ pipeline {
                                 ]]
                             ])
                         }
-                    }
-                }
-            }
-        }
-
-        stage('Publish / npm') {
-            when {
-                branch 'master'
-            }
-            steps {
-                script {
-                    docker.image('node:8').inside {
-                        withCredentials([
-                            string(credentialsId: 'NPM_CREDENTIALS', variable: 'NPM_TOKEN')
-                        ]) {
-                            sh "npm config set //registry.npmjs.org/:_authToken ${env.NPM_TOKEN}"
-                            sh "npm whoami"
-                            sh "./node_modules/.bin/lerna publish --canary --yes"
-                       }
                     }
                 }
             }
